@@ -17,28 +17,35 @@ else()
     set(SD_STANDALONE OFF)
 endif()
 
-#
-# Option list
-#
-
-# general
-#option(SD_BUILD_TESTS                "sd: build tests"    ${SD_STANDALONE})
-option(SD_BUILD_EXAMPLES             "sd: build examples" ${SD_STANDALONE})
-#option(SD_BUILD_SERVER               "sd: build server example"                           ON)
-
-
-# deps
 add_subdirectory(ggml)
 
 set(SD_LIB stable-diffusion)
 
 add_library(${SD_LIB} stable-diffusion.h stable-diffusion.cpp)
 target_link_libraries(${SD_LIB} PUBLIC ggml)
-target_include_directories(${SD_LIB} PUBLIC .)
-target_compile_features(${SD_LIB} PUBLIC cxx_std_11)
 
+if (GGML_HIPBLAS)
+    list(APPEND CMAKE_PREFIX_PATH /opt/rocm)
 
-if (SD_BUILD_EXAMPLES)
-    add_subdirectory(examples)
+    find_package(hip)
+    find_package(hipblas)
+    find_package(rocblas)
+
+    if (${hipblas_FOUND} AND ${hip_FOUND})
+        message(STATUS "HIP and hipBLAS found")
+        target_compile_definitions(${SD_LIB} PRIVATE GGML_USE_HIPBLAS GGML_USE_CUBLAS)
+        add_library(ggml-rocm OBJECT ./ggml/src/ggml-cuda.cu ./ggml/src/ggml-cuda.h)
+        target_compile_definitions(ggml-rocm PRIVATE GGML_CUDA_DMMV_X=${LLAMA_CUDA_DMMV_X})
+        target_compile_definitions(ggml-rocm PRIVATE GGML_CUDA_MMV_Y=${LLAMA_CUDA_MMV_Y})
+        target_compile_definitions(ggml-rocm PRIVATE K_QUANTS_PER_ITERATION=${LLAMA_CUDA_KQUANTS_ITER})
+        target_compile_definitions(ggml-rocm PRIVATE CC_TURING=1000000000)
+        set_source_files_properties(ggml-cuda.cu PROPERTIES LANGUAGE CXX)
+        target_link_libraries(ggml-rocm PRIVATE hip::device PUBLIC hip::host roc::rocblas roc::hipblas)
+        target_link_libraries(${SD_LIB} PRIVATE ggml-rocm)  # Link ggml-rocm to your library
+    else()
+        message(WARNING "hipBLAS or HIP not found. Try setting CMAKE_PREFIX_PATH=/opt/rocm")
+    endif()
 endif()
 
+target_include_directories(${SD_LIB} PUBLIC .)
+target_compile_features(${SD_LIB} PUBLIC cxx_std_11)
